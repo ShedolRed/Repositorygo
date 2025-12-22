@@ -1,157 +1,152 @@
 package handlers
 
 import (
-	"context"
-	"net/http"
-	"time"
+    "context"
+    "net/http"
+    "time"
 
-	"go-mongo-railway-api/internal/models"
+    "github.com/gin-gonic/gin"
+    "go.mongodb.org/mongo-driver/bson"
+    "go.mongodb.org/mongo-driver/bson/primitive"
+    "go.mongodb.org/mongo-driver/mongo/options"
 
-	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
+    "repositorygo/internal/models"
 )
 
-func CreateItem(db *mongo.Database) gin.HandlerFunc {
-	col := db.Collection("items")
-	return func(c *gin.Context) {
-		var payload map[string]interface{}
-		if err := c.ShouldBindJSON(&payload); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
-			return
-		}
+func (h *Handler) ListItems(c *gin.Context) {
+    ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+    defer cancel()
 
-		now := time.Now().Unix()
-		item := models.Item{
-			Data:      payload,
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
+    cur, err := h.coll().Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"createdAt": -1}))
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    defer cur.Close(ctx)
 
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		defer cancel()
+    items := make([]models.Item, 0)
+    for cur.Next(ctx) {
+        var it models.Item
+        if err := cur.Decode(&it); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+            return
+        }
+        items = append(items, it)
+    }
 
-		res, err := col.InsertOne(ctx, item)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db insert failed"})
-			return
-		}
-		if oid, ok := res.InsertedID.(primitive.ObjectID); ok {
-			item.ID = oid
-		}
-
-		c.JSON(http.StatusCreated, item)
-	}
+    c.JSON(http.StatusOK, items)
 }
 
-func ListItems(db *mongo.Database) gin.HandlerFunc {
-	col := db.Collection("items")
-	return func(c *gin.Context) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
-		defer cancel()
+func (h *Handler) CreateItem(c *gin.Context) {
+    var req models.CreateItemRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
 
-		cur, err := col.Find(ctx, bson.M{})
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db query failed"})
-			return
-		}
-		defer cur.Close(ctx)
+    now := time.Now().UTC()
+    doc := models.Item{
+        ID:        primitive.NewObjectID(),
+        Name:      req.Name,
+        Value:     req.Value,
+        CreatedAt: now,
+        UpdatedAt: now,
+    }
 
-		var out []models.Item
-		if err := cur.All(ctx, &out); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "decode failed"})
-			return
-		}
-		c.JSON(http.StatusOK, out)
-	}
+    ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+    defer cancel()
+
+    _, err := h.coll().InsertOne(ctx, doc)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusCreated, doc)
 }
 
-func GetItem(db *mongo.Database) gin.HandlerFunc {
-	col := db.Collection("items")
-	return func(c *gin.Context) {
-		idHex := c.Param("id")
-		oid, err := primitive.ObjectIDFromHex(idHex)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "bad id"})
-			return
-		}
+func (h *Handler) GetItem(c *gin.Context) {
+    oid, err := primitive.ObjectIDFromHex(c.Param("id"))
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+        return
+    }
 
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		defer cancel()
+    ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+    defer cancel()
 
-		var item models.Item
-		if err := col.FindOne(ctx, bson.M{"_id": oid}).Decode(&item); err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-			return
-		}
-		c.JSON(http.StatusOK, item)
-	}
+    var it models.Item
+    if err := h.coll().FindOne(ctx, bson.M{"_id": oid}).Decode(&it); err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+        return
+    }
+
+    c.JSON(http.StatusOK, it)
 }
 
-func UpdateItem(db *mongo.Database) gin.HandlerFunc {
-	col := db.Collection("items")
-	return func(c *gin.Context) {
-		idHex := c.Param("id")
-		oid, err := primitive.ObjectIDFromHex(idHex)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "bad id"})
-			return
-		}
+func (h *Handler) UpdateItem(c *gin.Context) {
+    oid, err := primitive.ObjectIDFromHex(c.Param("id"))
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+        return
+    }
 
-		var payload map[string]interface{}
-		if err := c.ShouldBindJSON(&payload); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
-			return
-		}
+    var req models.UpdateItemRequest
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
 
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 6*time.Second)
-		defer cancel()
+    set := bson.M{}
+    if req.Name != nil {
+        set["name"] = *req.Name
+    }
+    if req.Value != nil {
+        set["value"] = *req.Value
+    }
+    if len(set) == 0 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "nothing to update"})
+        return
+    }
+    set["updatedAt"] = time.Now().UTC()
 
-		update := bson.M{
-			"$set": bson.M{
-				"data":            payload,
-				"updated_at_unix": time.Now().Unix(),
-			},
-		}
+    ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+    defer cancel()
 
-		res, err := col.UpdateOne(ctx, bson.M{"_id": oid}, update)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db update failed"})
-			return
-		}
-		if res.MatchedCount == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-			return
-		}
+    res, err := h.coll().UpdateOne(ctx, bson.M{"_id": oid}, bson.M{"$set": set})
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    if res.MatchedCount == 0 {
+        c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+        return
+    }
 
-		c.Status(http.StatusNoContent)
-	}
+    var it models.Item
+    _ = h.coll().FindOne(ctx, bson.M{"_id": oid}).Decode(&it)
+    c.JSON(http.StatusOK, it)
 }
 
-func DeleteItem(db *mongo.Database) gin.HandlerFunc {
-	col := db.Collection("items")
-	return func(c *gin.Context) {
-		idHex := c.Param("id")
-		oid, err := primitive.ObjectIDFromHex(idHex)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "bad id"})
-			return
-		}
+func (h *Handler) DeleteItem(c *gin.Context) {
+    oid, err := primitive.ObjectIDFromHex(c.Param("id"))
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+        return
+    }
 
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-		defer cancel()
+    ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
+    defer cancel()
 
-		res, err := col.DeleteOne(ctx, bson.M{"_id": oid})
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "db delete failed"})
-			return
-		}
-		if res.DeletedCount == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-			return
-		}
+    res, err := h.coll().DeleteOne(ctx, bson.M{"_id": oid})
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    if res.DeletedCount == 0 {
+        c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+        return
+    }
 
-		c.Status(http.StatusNoContent)
-	}
+    c.Status(http.StatusNoContent)
 }

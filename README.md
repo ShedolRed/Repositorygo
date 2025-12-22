@@ -1,29 +1,36 @@
-# Go + MongoDB API (Railway-ready)
+# Repositorygo — Go + MongoDB API (Railway-ready)
+
+## Что внутри
+- Gin HTTP API
+- MongoDB driver
+- CRUD по /items
+- Подключение к Mongo через `MONGO_URL` (или через переменные MONGOHOST/MONGOPORT/MONGOUSER/MONGOPASSWORD)
+- Авто-добавление `authSource=admin` если его нет в URI (частая причина auth проблем на Railway)
 
 ## Endpoints
-- `GET /health` — checks Mongo connection
-- `POST /items` — create item (any JSON)
-- `GET /items` — list items
-- `GET /items/:id` — get by id
-- `PUT /items/:id` — replace `data` with new JSON
-- `DELETE /items/:id` — delete by id
+- GET  /health
+- GET  /items
+- POST /items
+- GET  /items/:id
+- PUT  /items/:id
+- DELETE /items/:id
 
-## Environment variables
-- `PORT` — Railway provides automatically
-- `MONGO_URL` — Railway MongoDB service provides automatically
-- `MONGO_DB_NAME` — default: `appdb`
-
-## Local run
+## Локальный запуск
+1) Скопируй `.env.example` → `.env` и заполни.
+2) В терминале:
 ```bash
-export MONGO_URL="mongodb://localhost:27017"
-export MONGO_DB_NAME="appdb"
 go mod tidy
 go run ./cmd/api
 ```
 
-## Railway deploy (high level)
-1) Push this repo to GitHub
-2) Railway → New Project → Deploy from GitHub Repo
-3) Add → Database → MongoDB
-4) In API service → Variables: set `MONGO_DB_NAME=appdb`
-5) Generate Domain → open `https://<domain>/health`
+## Railway (самое важное!)
+1) Push в GitHub.
+2) Railway → New Project → Deploy from GitHub repo.
+3) Add Service → MongoDB.
+4) Открой свой API service → Variables:
+   - `MONGO_DB_NAME` = `appdb` (или другое имя)
+   - `MONGO_URL` добавь через **Reference**:
+     New Variable → Reference → выбери MongoDB service → `MONGO_URL`
+
+Если копируешь URI вручную — часто ловишь ошибки типа AuthenticationFailed.
+Reference подставит правильное значение автоматически.

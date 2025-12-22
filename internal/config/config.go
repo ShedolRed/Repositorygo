@@ -1,36 +1,46 @@
 package config
 
-import "os"
+import (
+    "os"
+    "strings"
+)
 
 type Config struct {
-	Port       string
-	MongoURL   string
-	MongoDBName string
+    Port string
+
+    MongoDBName string
+    MongoURL    string
+
+    MongoHost     string
+    MongoPort     string
+    MongoUser     string
+    MongoPassword string
+
+    MongoRootUser     string
+    MongoRootPassword string
 }
 
 func Load() Config {
-	port := getenv("PORT", "8080")
+    return Config{
+        Port:        env("PORT", "8080"),
+        MongoDBName: env("MONGO_DB_NAME", "appdb"),
 
-	// Railway Mongo service provides MONGO_URL
-	mongoURL := os.Getenv("MONGO_URL")
-	if mongoURL == "" {
-		// allow alternative naming for local/other hosts
-		mongoURL = os.Getenv("MONGODB_URL")
-	}
+        MongoURL: strings.TrimSpace(os.Getenv("MONGO_URL")),
 
-	dbName := getenv("MONGO_DB_NAME", "appdb")
+        MongoHost:     strings.TrimSpace(os.Getenv("MONGOHOST")),
+        MongoPort:     strings.TrimSpace(os.Getenv("MONGOPORT")),
+        MongoUser:     strings.TrimSpace(os.Getenv("MONGOUSER")),
+        MongoPassword: strings.TrimSpace(os.Getenv("MONGOPASSWORD")),
 
-	return Config{
-		Port:        port,
-		MongoURL:    mongoURL,
-		MongoDBName: dbName,
-	}
+        MongoRootUser:     strings.TrimSpace(os.Getenv("MONGO_INITDB_ROOT_USERNAME")),
+        MongoRootPassword: strings.TrimSpace(os.Getenv("MONGO_INITDB_ROOT_PASSWORD")),
+    }
 }
 
-func getenv(k, def string) string {
-	v := os.Getenv(k)
-	if v == "" {
-		return def
-	}
-	return v
+func env(key, def string) string {
+    v := strings.TrimSpace(os.Getenv(key))
+    if v == "" {
+        return def
+    }
+    return v
 }

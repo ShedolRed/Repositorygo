@@ -1,72 +1,50 @@
 package main
 
 import (
-	"context"
-	"log"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
+    "context"
+    "net/http"
+    "time"
 
-	"go-mongo-railway-api/internal/config"
-	"go-mongo-railway-api/internal/db"
-	"go-mongo-railway-api/internal/handlers"
+    "github.com/gin-gonic/gin"
 
-	"github.com/gin-gonic/gin"
+    "repositorygo/internal/config"
+    "repositorygo/internal/db"
+    "repositorygo/internal/handlers"
 )
 
 func main() {
-	cfg := config.Load()
+    cfg := config.Load()
 
-	client, err := db.ConnectMongo(cfg.MongoURL)
-	if err != nil {
-		log.Fatalf("mongo connect failed: %v", err)
-	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = client.Disconnect(ctx)
-	}()
+    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+    defer cancel()
 
-	database := client.Database(cfg.MongoDBName)
+    mongoClient, mongoDB, err := db.ConnectMongo(ctx, cfg)
+    if err != nil {
+        // Railway перезапустит контейнер, если приложение упало.
+        panic(err)
+    }
+    defer func() { _ = mongoClient.Disconnect(context.Background()) }()
 
-	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+    r := gin.New()
+    r.Use(gin.Logger(), gin.Recovery())
 
-	// Public routes
-	r.GET("/health", handlers.Health(client, cfg.MongoDBName))
+    h := handlers.New(mongoDB, cfg)
 
-	// Simple Items CRUD (Mongo collection: items)
-	r.POST("/items", handlers.CreateItem(database))
-	r.GET("/items", handlers.ListItems(database))
-	r.GET("/items/:id", handlers.GetItem(database))
-	r.PUT("/items/:id", handlers.UpdateItem(database))
-	r.DELETE("/items/:id", handlers.DeleteItem(database))
+    r.GET("/health", h.Health)
 
-	srv := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           r,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+    r.GET("/items", h.ListItems)
+    r.POST("/items", h.CreateItem)
+    r.GET("/items/:id", h.GetItem)
+    r.PUT("/items/:id", h.UpdateItem)
+    r.DELETE("/items/:id", h.DeleteItem)
 
-	go func() {
-		log.Printf("server started on :%s", cfg.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server error: %v", err)
-		}
-	}()
+    srv := &http.Server{
+        Addr:              ":" + cfg.Port,
+        Handler:           r,
+        ReadHeaderTimeout: 10 * time.Second,
+    }
 
-	// graceful shutdown
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(ctx)
-	log.Println("shutdown complete")
+    if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+        panic(err)
+    }
 }
